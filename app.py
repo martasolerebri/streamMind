@@ -1,45 +1,64 @@
 import streamlit as st
+import tempfile
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 
-st.set_page_config(page_title="MathMind AI", page_icon="🧮", layout="wide")
-st.title("🧮 MathMind: Your AI Math Tutor")
-st.markdown("Solve complex problems and learn the logic behind them using **Groq** and **LaTeX**.")
+st.set_page_config(page_title="MathMind Pro", page_icon="🧮", layout="wide")
+st.title("🧮 MathMind Pro: RAG Math Tutor")
 
 with st.sidebar:
     st.header("Credentials")
     groq_api_key = st.text_input("Groq API Key", type="password")
     hf_api_key = st.text_input("Hugging Face API Key", type="password")
+    
     st.divider()
-    st.info("This tutor uses RAG to fetch mathematical rules and Groq to solve equations in milliseconds.")
+    
+    st.header("Knowledge Base")
+    uploaded_file = st.file_uploader("Upload Math PDF", type="pdf")
+    
+    if st.button("Clear Database"):
+        if "math_retriever" in st.session_state:
+            del st.session_state.math_retriever
+        if "messages" in st.session_state:
+            st.session_state.messages = []
+        st.rerun()
 
 if not groq_api_key or not hf_api_key:
     st.warning("Please enter your API Keys to start.")
     st.stop()
 
 @st.cache_resource
-def load_math_engine(groq_key):
+def load_base_models(groq_key):
     llm = ChatGroq(api_key=groq_key, model="llama-3.3-70b-versatile", temperature=0.1)
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    
-    # Simple RAG: Basic math rules for the AI to follow
-    math_rules = [
-        "Pythagorean theorem: a^2 + b^2 = c^2",
-        "Quadratic formula: x = (-b ± sqrt(b^2 - 4ac)) / 2a",
-        "Derivative of x^n is n*x^(n-1)",
-        "Integral of 1/x is ln|x|",
-        "Area of a circle: πr^2",
-        "Chain rule: d/dx [f(g(x))] = f'(g(x)) * g'(x)"
-    ]
-    vectorstore = FAISS.from_texts(math_rules, embedding=embeddings)
-    return llm, vectorstore.as_retriever()
+    return llm, embeddings
 
-llm, retriever = load_math_engine(groq_api_key)
+llm, embeddings = load_base_models(groq_api_key)
+
+def process_pdf(file):
+    with tempfile.NamedTemporaryFile(delete=False) as tf:
+        tf.write(file.getbuffer())
+        file_path = tf.name
+    
+    loader = PyMuPDFLoader(file_path)
+    docs = loader.load()
+    
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=80)
+    chunks = text_splitter.split_documents(docs)
+    
+    vectorstore = FAISS.from_documents(chunks, embedding=embeddings)
+    return vectorstore.as_retriever(search_kwargs={"k": 4})
+
+if uploaded_file and "math_retriever" not in st.session_state:
+    with st.spinner("Indexing PDF..."):
+        st.session_state.math_retriever = process_pdf(uploaded_file)
+        st.success("PDF ready!")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -47,27 +66,28 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
-if prompt := st.chat_input("Enter a math problem (e.g., 'Solve 2x + 5 = 15' or 'Derive sin(x)^2')"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    st.chat_message("user").write(prompt)
+if prompt := st.chat_input("Ask about the math in your PDF"):
+    if not uploaded_file:
+        st.error("Please upload a PDF first.")
+    else:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.chat_message("user").write(prompt)
 
-    template = """You are a professional Math Tutor. 
-    1. Use the following math rules as reference: {context}
-    2. Solve the user's problem step-by-step.
-    3. Use LaTeX for ALL mathematical formulas. Wrap equations in $$ for blocks and $ for inline.
-    4. Be concise and clear.
+        template = """You are an expert Math Tutor. Use the provided context to answer.
+        Always use LaTeX for mathematical notation ($ for inline, $$ for block).
+        
+        Context: {context}
+        Question: {input}
+        Answer:"""
+        
+        qa_prompt = ChatPromptTemplate.from_template(template)
 
-    Problem: {input}
-    Solution:"""
-    
-    qa_prompt = ChatPromptTemplate.from_template(template)
+        chain = (
+            {"context": st.session_state.math_retriever, "input": RunnablePassthrough()}
+            | qa_prompt | llm | StrOutputParser()
+        )
 
-    chain = (
-        {"context": retriever, "input": RunnablePassthrough()}
-        | qa_prompt | llm | StrOutputParser()
-    )
-
-    with st.chat_message("assistant"):
-        response = chain.invoke(prompt)
-        st.write(response)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+        with st.chat_message("assistant"):
+            response = chain.invoke(prompt)
+            st.write(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
