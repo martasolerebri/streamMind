@@ -26,42 +26,48 @@ with st.sidebar:
         st.rerun()
 
 if not groq_api_key or not hf_api_key:
-    st.warning("Please enter your API Keys in the sidebar.")
+    st.warning("Please enter your API Keys in the sidebar to start.")
     st.stop()
 
 @st.cache_resource
 def load_base_models(groq_key):
+    # Model optimized for math reasoning
     llm = ChatGroq(api_key=groq_key, model="llama-3.3-70b-versatile", temperature=0.1)
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return llm, embeddings
 
 llm, embeddings = load_base_models(groq_api_key)
 
-def process_pdf(file):
+def process_pdf_safe(file):
+    # We create a physical temporary file to ensure compatibility
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tf:
         tf.write(file.getbuffer())
         temp_path = tf.name
     
     try:
+        # Using PyPDFLoader specifically as it's the most stable for Streamlit Cloud
         loader = PyPDFLoader(temp_path)
         docs = loader.load()
+        
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         chunks = splitter.split_documents(docs)
+        
         vs = FAISS.from_documents(chunks, embedding=embeddings)
         return vs.as_retriever(search_kwargs={"k": 4})
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Critical error loading PDF: {str(e)}")
         return None
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
+# Logic to prevent re-processing
 if uploaded_file and "math_retriever" not in st.session_state:
-    with st.spinner("Indexing math content..."):
-        retriever = process_pdf(uploaded_file)
+    with st.spinner("Indexing mathematical formulas..."):
+        retriever = process_pdf_safe(uploaded_file)
         if retriever:
             st.session_state.math_retriever = retriever
-            st.success("PDF Indexed!")
+            st.success("PDF knowledge integrated!")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -69,22 +75,29 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
-if prompt := st.chat_input("Ask about your math PDF"):
+if prompt := st.chat_input("Ask a math question about your PDF"):
     if "math_retriever" not in st.session_state:
-        st.error("Please upload a PDF first.")
+        st.error("Upload a PDF file first.")
     else:
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").write(prompt)
 
-        template = "Context: {context}\n\nQuestion: {input}\n\nAnswer using LaTeX:"
-        qa_prompt = ChatPromptTemplate.from_template(template)
+        # Prompt focusing on LaTeX rendering
+        template = """You are a Math expert. Use the following context to answer.
+        ALWAYS use LaTeX for formulas (wrap with $$ for blocks, $ for inline).
         
+        Context: {context}
+        Question: {input}
+        Detailed Solution:"""
+        
+        qa_prompt = ChatPromptTemplate.from_template(template)
         chain = (
             {"context": st.session_state.math_retriever, "input": RunnablePassthrough()}
             | qa_prompt | llm | StrOutputParser()
         )
 
         with st.chat_message("assistant"):
-            response = chain.invoke(prompt)
-            st.write(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+            with st.spinner("Reasoning..."):
+                response = chain.invoke(prompt)
+                st.write(response)
+                st.session_state.messages.append({"role": "assistant", "content": response})
