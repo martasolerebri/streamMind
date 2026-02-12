@@ -4,5 +4,5 @@ langchain-huggingface
 langchain-community
 faiss-cpu
 sentence-transformers
-pymupdf
 pypdf
+cryptography
