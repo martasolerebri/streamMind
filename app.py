@@ -6,7 +6,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
-from youtube_transcript_api import YouTubeTranscriptApi
+import youtube_transcript_api
 
 st.set_page_config(page_title="StreamMind AI", page_icon="🎬", layout="wide")
 st.title("🎬 StreamMind: Chat with your Videos")
@@ -42,7 +42,8 @@ def process_video(url):
         st.error("Invalid YouTube URL")
         return None
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'es'])
+        # Cambio clave: llamada directa al modulo
+        transcript_list = youtube_transcript_api.YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'es'])
         full_text = " ".join([t['text'] for t in transcript_list])
         
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
@@ -51,19 +52,17 @@ def process_video(url):
         vs = FAISS.from_texts(chunks, embedding=embeddings)
         return vs.as_retriever(search_kwargs={"k": 5})
     except Exception as e:
-        st.error(f"Transcript Error: {str(e)}")
-        st.info("Note: Make sure the video has captions enabled.")
+        st.error(f"Error: {str(e)}")
         return None
 
 if video_url:
     if "current_video" not in st.session_state or st.session_state.current_video != video_url:
-        with st.spinner("Analyzing video..."):
+        with st.spinner("Processing..."):
             retriever = process_video(video_url)
             if retriever:
                 st.session_state.retriever = retriever
                 st.session_state.current_video = video_url
                 st.session_state.messages = []
-                st.success("Ready to chat!")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -73,22 +72,15 @@ for msg in st.session_state.messages:
 
 if prompt := st.chat_input("Ask about the video"):
     if "retriever" not in st.session_state:
-        st.error("No video data found.")
+        st.error("No video data.")
     else:
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").write(prompt)
 
-        template = """Answer the question based strictly on the transcript provided.
-        Context: {context}
-        Question: {input}"""
-        
-        qa_prompt = ChatPromptTemplate.from_template(template)
-
+        qa_prompt = ChatPromptTemplate.from_template("Context: {context}\n\nQuestion: {input}")
         chain = (
             {"context": st.session_state.retriever, "input": RunnablePassthrough()}
-            | qa_prompt
-            | llm
-            | StrOutputParser()
+            | qa_prompt | llm | StrOutputParser()
         )
 
         with st.chat_message("assistant"):
