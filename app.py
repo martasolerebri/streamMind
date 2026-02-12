@@ -13,7 +13,6 @@ from langchain_core.runnables import RunnablePassthrough
 
 st.set_page_config(page_title="StreamMind AI", page_icon="🎬", layout="wide")
 st.title("🎬 StreamMind: Chat with your Videos")
-st.markdown("Analyze YouTube transcripts instantly using **Groq** (Llama 3) and **RAG**.")
 
 with st.sidebar:
     st.header("Credentials")
@@ -24,9 +23,6 @@ with st.sidebar:
     
     st.header("Content Source")
     video_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
-    
-    st.divider()
-    st.info("This system extracts the transcript, indexes it into a vector store, and allows you to perform lightning-fast queries.")
 
 if not groq_api_key or not hf_api_key:
     st.warning("Please enter your API Keys in the sidebar to begin.")
