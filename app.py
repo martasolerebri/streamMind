@@ -38,7 +38,6 @@ def load_base_models(groq_key):
 llm, embeddings = load_base_models(groq_api_key)
 
 def process_pdf(file):
-    # Creamos un archivo temporal físico para que el loader pueda leerlo por ruta
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tf:
         tf.write(file.getbuffer())
         temp_path = tf.name
@@ -46,17 +45,14 @@ def process_pdf(file):
     try:
         loader = PyPDFLoader(temp_path)
         docs = loader.load()
-        
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         chunks = splitter.split_documents(docs)
-        
         vs = FAISS.from_documents(chunks, embedding=embeddings)
         return vs.as_retriever(search_kwargs={"k": 4})
     except Exception as e:
-        st.error(f"Error indexing PDF: {e}")
+        st.error(f"Error: {e}")
         return None
     finally:
-        # Limpiamos el archivo temporal después de usarlo
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
@@ -65,7 +61,7 @@ if uploaded_file and "math_retriever" not in st.session_state:
         retriever = process_pdf(uploaded_file)
         if retriever:
             st.session_state.math_retriever = retriever
-            st.success("Knowledge base updated!")
+            st.success("PDF Indexed!")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -80,13 +76,9 @@ if prompt := st.chat_input("Ask about your math PDF"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").write(prompt)
 
-        template = """You are an expert Math Tutor. Use the provided context to answer.
-        Always use LaTeX for math ($ inline, $$ block).
-        Context: {context}
-        Question: {input}
-        Answer:"""
-        
+        template = "Context: {context}\n\nQuestion: {input}\n\nAnswer using LaTeX:"
         qa_prompt = ChatPromptTemplate.from_template(template)
+        
         chain = (
             {"context": st.session_state.math_retriever, "input": RunnablePassthrough()}
             | qa_prompt | llm | StrOutputParser()
