@@ -10,7 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 
 st.set_page_config(page_title="MathMind Pro", page_icon="🧮", layout="wide")
-st.title("🧮 MathMind Pro: RAG Math Tutor")
+st.title("🧮 MathMind Pro: Math Tutor")
 
 with st.sidebar:
     st.header("Credentials")
